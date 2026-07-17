@@ -89,6 +89,26 @@ app.include_router(speak_route.router)
 app.include_router(control_route.router)
 app.include_router(channels_route.router)
 
+@app.middleware("http")
+async def require_authentication(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/v1/") and not path.endswith("/webhook") and os.getenv("GLC_ENV") != "test":
+        expected = get_or_create_install_token()
+        authorization = request.headers.get("authorization") or request.headers.get("Authorization")
+        if not authorization or not authorization.startswith("Bearer "):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "missing bearer token (Authorization: Bearer <install_token>)"}
+            )
+        presented = authorization.removeprefix("Bearer ").strip()
+        if presented != expected:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "install token mismatch"}
+            )
+
+    response = await call_next(request)
+    return response
 
 @app.get("/", response_class=HTMLResponse)
 async def index() -> str:
