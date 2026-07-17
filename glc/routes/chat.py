@@ -287,23 +287,85 @@ def _required_caps(req: ChatRequest):
 
 async def _resolve_image_urls(messages):
     import base64
-
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse, urljoin
     import httpx as _httpx
+
+    def _is_safe_ip(ip_str: str) -> bool:
+        try:
+            ip = ipaddress.ip_address(ip_str)
+            return not (
+                ip.is_loopback or
+                ip.is_private or
+                ip.is_link_local or
+                ip.is_multicast or
+                ip.is_unspecified
+            )
+        except ValueError:
+            return False
+
+    def _is_safe_url(url_to_check: str) -> bool:
+        try:
+            parsed = urlparse(url_to_check)
+            if parsed.scheme not in ("http", "https"):
+                return False
+            host = parsed.hostname
+            if not host:
+                return False
+            
+            # Check if host is direct IP
+            try:
+                ipaddress.ip_address(host)
+                return _is_safe_ip(host)
+            except ValueError:
+                pass
+            
+            # Resolve host DNS
+            addr_info = socket.getaddrinfo(host, None)
+            for family, socktype, proto, canonname, sockaddr in addr_info:
+                ip = sockaddr[0]
+                if not _is_safe_ip(ip):
+                    return False
+            return True
+        except Exception:
+            return False
 
     async def _fetch_to_data_url(url: str) -> str:
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; GLCv1/0.1; +image-resolver)",
             "Accept": "image/*,*/*;q=0.8",
         }
-        async with _httpx.AsyncClient(timeout=30, follow_redirects=True, headers=headers) as c:
-            try:
-                r = await c.get(url)
-                r.raise_for_status()
-            except _httpx.HTTPError as e:
-                raise HTTPException(400, f"failed to fetch image url {url!r}: {e}")
-            mt = (r.headers.get("content-type") or "image/png").split(";")[0].strip()
-            b64 = base64.b64encode(r.content).decode()
-            return f"data:{mt};base64,{b64}"
+        current_url = url
+        redirect_count = 0
+        max_redirects = 5
+
+        async with _httpx.AsyncClient(timeout=30, follow_redirects=False, headers=headers) as c:
+            while True:
+                if not _is_safe_url(current_url):
+                    raise HTTPException(400, f"Dangerous URL blocker triggered: {current_url!r}")
+
+                try:
+                    r = await c.get(current_url)
+                    if r.status_code not in (301, 302, 303, 307, 308):
+                        r.raise_for_status()
+                except _httpx.HTTPError as e:
+                    raise HTTPException(400, f"failed to fetch image url {url!r}: {e}")
+
+                if r.status_code in (301, 302, 303, 307, 308):
+                    redirect_count += 1
+                    if redirect_count > max_redirects:
+                        raise HTTPException(400, "too many redirects")
+
+                    loc = r.headers.get("location")
+                    if not loc:
+                        raise HTTPException(400, "redirect missing location header")
+                    current_url = urljoin(current_url, loc)
+                    continue
+
+                mt = (r.headers.get("content-type") or "image/png").split(";")[0].strip()
+                b64 = base64.b64encode(r.content).decode()
+                return f"data:{mt};base64,{b64}"
 
     out = []
     for m in messages:
