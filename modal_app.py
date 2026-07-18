@@ -43,7 +43,7 @@ image = (
     .add_local_dir(str(LOCAL_GLC), remote_path="/root/glc")
 )
 
-# A persistent Volume. The audit db, pairing db, and install token live here and
+# A persistent Volume. The audit db and pairing db live here and
 # survive restarts and redeploys. Without this, every restart wipes them.
 data_volume = modal.Volume.from_name("glc-data", create_if_missing=True)
 
@@ -51,11 +51,14 @@ data_volume = modal.Volume.from_name("glc-data", create_if_missing=True)
 # separately with `modal secret create glc-llm-keys ...` (mock values for now).
 llm_secret = modal.Secret.from_name("glc-llm-keys")
 
+# The master installation token, injected as an environment variable (GLC_INSTALL_TOKEN).
+install_token_secret = modal.Secret.from_name("glc-install-token")
+
 
 @app.function(
     image=image,
     volumes={"/data": data_volume},
-    secrets=[llm_secret],
+    secrets=[llm_secret, install_token_secret],
     min_containers=0,  # scale to zero when idle -> protects the free tier
 )
 @modal.asgi_app()

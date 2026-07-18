@@ -50,6 +50,10 @@ def install_token_path() -> Path:
 def get_or_create_install_token() -> str:
     """Per-installation token used to authenticate WS adapter connections
     and /v1/control/* requests. Generated once and persisted to disk."""
+    env_tok = os.getenv("GLC_INSTALL_TOKEN")
+    if env_tok:
+        return env_tok.strip()
+
     p = install_token_path()
     if p.exists():
         return p.read_text().strip()
