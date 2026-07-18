@@ -66,6 +66,20 @@ async def channel_ws(websocket: WebSocket, name: str, token: str | None = Query(
                 await websocket.send_text(json.dumps({"error": f"invalid envelope: {e}"}))
                 continue
 
+            # Guard: declared channel must match the WebSocket route path.
+            # Prevents a connected Slack adapter from spoofing a Telegram envelope
+            # to bypass Telegram's allowlist, rate limits, or trust level.
+            if env.channel != name:
+                audit_append(
+                    channel=name,
+                    channel_user_id=env.channel_user_id,
+                    trust_level="unknown",
+                    event_type="channel_spoof_attempt",
+                    result={"declared": env.channel, "expected": name},
+                )
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+
             ok, why = allowed(
                 env.channel,
                 env.channel_user_id,
