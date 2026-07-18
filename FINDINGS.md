@@ -87,3 +87,11 @@
 - **Invariant:** Cost and usage records must only be writable by the gateway; tampered rows must be excluded from all reports
 - **Fix:** [db.py] — added `signature` column to `calls` table. `log_call()` computes `HMAC-SHA256(install_token, ts|provider|model|input_tokens|output_tokens|agent)` and stores it with every insert. `by_agent()` and `recent()` verify each row's signature before inclusion; tampered or unsigned rows are silently discarded. Schema migration applies retroactively via `ALTER TABLE`.
 
+---
+
+## 13: Concurrent Volume Writers / Audit Trail Corruption
+- **Attacker:** Multiple scaled container replicas writing concurrently to the same shared SQLite database volume mount
+- **Invariant:** The SQLite database volume must have exactly one writer container at a time to prevent file locking corruption and split-brain audit trails
+- **Fix:** [modal_app.py] — configured the FastAPI app container with `max_containers=1`. Modal will serialize incoming HTTP API requests via a queue rather than spawning additional concurrent gateway processes, protecting SQLite from mutational collision.
+
+

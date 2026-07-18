@@ -35,11 +35,13 @@ image = (
     .add_local_file("pyproject.toml", "/root/pyproject.toml")
     .add_local_file("uv.lock", "/root/uv.lock")
     .run_commands("cd /root && uv sync --frozen --no-dev --no-install-project")
-    .env({
-        "GLC_CONFIG_DIR": "/data/glc",
-        "GLC_ENV": "production",
-        "PATH": "/root/.venv/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-    })
+    .env(
+        {
+            "GLC_CONFIG_DIR": "/data/glc",
+            "GLC_ENV": "production",
+            "PATH": "/root/.venv/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        }
+    )
     .add_local_dir(str(LOCAL_GLC), remote_path="/root/glc")
 )
 
@@ -61,6 +63,7 @@ install_token_secret = modal.Secret.from_name("glc-install-token")
     volumes={"/data": data_volume},
     secrets=[llm_secret, install_token_secret],
     min_containers=0,  # scale to zero when idle -> protects the free tier
+    max_containers=1,  # pin container concurrency to prevent SQLite volume writes corruption
 )
 @modal.asgi_app()
 def fastapi_app():
