@@ -52,3 +52,49 @@ def allowed(
     if is_public_channel and cfg["mention_only_in_public"] and not was_mentioned:
         return False, "sender in public channel must be explicitly mentioned"
     return True, ""
+
+
+def get_egress_hosts(channel: str) -> list[str]:
+    """Return the list of permitted outbound hostnames for a given channel adapter."""
+    cfg = load_channels()
+    defaults = cfg.get("defaults") or {}
+    ch_cfg = (cfg.get("channels") or {}).get(channel) or {}
+    return ch_cfg.get("egress_hosts", defaults.get("egress_hosts", []))
+
+
+def check_egress(channel: str, url: str) -> bool:
+    """Return True only if the target URL's hostname is in the channel's egress allowlist.
+
+    Deny-by-default: if the allowlist is empty or the hostname is not in it,
+    the connection is rejected. Also blocks raw IP addresses in private/reserved ranges.
+    """
+    from urllib.parse import urlparse
+    import ipaddress
+
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname or ""
+    except Exception:
+        return False
+
+    # Block raw IP address access (private/loopback/link-local/etc.)
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_multicast
+            or addr.is_reserved
+            or addr.is_unspecified
+        ):
+            return False
+    except ValueError:
+        pass  # Not an IP, continue with hostname check
+
+    allowed_hosts = get_egress_hosts(channel)
+    if not allowed_hosts:
+        return False  # Deny by default if no hosts declared
+
+    return any(hostname == h or hostname.endswith("." + h) for h in allowed_hosts)
+

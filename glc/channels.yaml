@@ -8,20 +8,55 @@ defaults:
     tool_calls_per_minute: 20
   allowed_senders: []            # empty == owner-only by default
   mention_only_in_public: true
+  egress_hosts: []               # empty == no outbound traffic permitted by default
 
 channels:
-  telegram:    {enabled: false}
-  discord:     {enabled: false}
-  slack:       {enabled: false}
-  whatsapp:    {enabled: true}
-  teams:       {enabled: false}
-  matrix:      {enabled: false}
-  line:        {enabled: false}
-  signal:      {enabled: false}
-  gmail:       {enabled: false}
-  imap:        {enabled: false}
-  twilio_sms:  {enabled: false}
-  twilio_voice: {enabled: false}
-  webui:       {enabled: true}
-  webhook:     {enabled: false}
-  local_mic:   {enabled: false}
+  telegram:
+    enabled: false
+    egress_hosts: ["api.telegram.org"]
+  discord:
+    enabled: false
+    egress_hosts: ["discord.com", "discordapp.com"]
+  slack:
+    enabled: false
+    egress_hosts: ["slack.com", "api.slack.com", "hooks.slack.com"]
+  whatsapp:
+    enabled: true
+    egress_hosts: ["graph.facebook.com", "api.twilio.com"]
+  teams:
+    enabled: false
+    egress_hosts: ["graph.microsoft.com", "smba.trafficmanager.net", "login.microsoftonline.com", "api.botframework.com"]
+
+  matrix:
+    enabled: false
+    egress_hosts: []
+
+  line:
+    enabled: false
+    egress_hosts: ["api.line.me"]
+  signal:
+    enabled: false
+    egress_hosts: []
+  gmail:
+    enabled: false
+    egress_hosts: ["www.googleapis.com", "gmail.googleapis.com", "oauth2.googleapis.com"]
+
+  imap:
+    enabled: false
+    egress_hosts: []
+  twilio_sms:
+    enabled: false
+    egress_hosts: ["api.twilio.com"]
+  twilio_voice:
+    enabled: false
+    egress_hosts: ["api.twilio.com"]
+  webui:
+    enabled: true
+    egress_hosts: []
+  webhook:
+    enabled: false
+    egress_hosts: []
+  local_mic:
+    enabled: false
+    egress_hosts: []
+

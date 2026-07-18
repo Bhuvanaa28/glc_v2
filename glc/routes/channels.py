@@ -191,5 +191,21 @@ async def channel_webhook(name: str, request: Request):
         text=f"[glc echo] {msg.text or ''}",
         thread_id=msg.thread_id,
     )
-    await adapter.send(reply)
+
+    if os.environ.get("GLC_ENV") == "production":
+        # Dispatch send() to the sandboxed Modal function for this channel.
+        # The sandbox runs with network_access restricted to egress_hosts only.
+        try:
+            from modal_adapters import SANDBOX_SEND
+            sandbox_fn = SANDBOX_SEND.get(name)
+            if sandbox_fn is not None:
+                sandbox_fn.remote(reply.model_dump())  # type: ignore[union-attr]
+            else:
+                await adapter.send(reply)  # fallback: unknown/new channel
+        except Exception:
+            await adapter.send(reply)   # graceful degradation if Modal unavailable
+    else:
+        await adapter.send(reply)
+
     return {"status": "ok"}
+
