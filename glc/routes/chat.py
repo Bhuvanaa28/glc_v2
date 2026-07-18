@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from urllib.parse import urlparse
+
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -533,7 +535,9 @@ async def chat(req: ChatRequest, request: Request):
                             session=req.session,
                             retries=retries,
                         )
-                        yield f"data: {json.dumps({'error': str(e)[:300]})}\n\n"
+                        p_obj = state.providers.get(name)
+                        domain = urlparse(p_obj.base_url).hostname if (p_obj and getattr(p_obj, "base_url", None)) else name
+                        yield f"data: {json.dumps({'error': f'{name} failed: upstream error from {domain}'})}\n\n"
 
                 return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -667,7 +671,9 @@ async def chat(req: ChatRequest, request: Request):
                 tag += f" → backoff {secs:.0f}s ({reason})"
             all_attempts.append({"provider": name, "reason": tag})
             if explicit_override or not getattr(e, "retryable", True):
-                raise HTTPException(502, f"{name} failed: {e}")
+                p_obj = state.providers.get(name)
+                domain = urlparse(p_obj.base_url).hostname if (p_obj and getattr(p_obj, "base_url", None)) else name
+                raise HTTPException(502, f"{name} failed: upstream error from {domain}")
             candidates = [c for c in candidates if c != name]
             continue
         except HTTPException:
@@ -692,11 +698,15 @@ async def chat(req: ChatRequest, request: Request):
             )
             all_attempts.append({"provider": name, "reason": f"exception: {str(e)[:120]}"})
             if explicit_override:
-                raise HTTPException(502, f"{name} failed: {e}")
+                p_obj = state.providers.get(name)
+                domain = urlparse(p_obj.base_url).hostname if (p_obj and getattr(p_obj, "base_url", None)) else name
+                raise HTTPException(502, f"{name} failed: upstream error from {domain}")
             candidates = [c for c in candidates if c != name]
             continue
 
-    raise HTTPException(503, f"all providers unavailable. attempts: {all_attempts}. last_error: {last_err}")
+    import logging
+    logging.error(f"[glc.chat] all providers exhausted. Attempts: {all_attempts}. Last error: {last_err}")
+    raise HTTPException(503, "all providers unavailable")
 
 
 @router.post("/v1/chat/batch")
