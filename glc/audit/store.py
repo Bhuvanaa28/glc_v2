@@ -18,6 +18,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+import hashlib
 
 DEFAULT_DIR = Path(os.path.expanduser("~/.glc"))
 
@@ -46,6 +47,35 @@ _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 def init_store() -> None:
     with _conn() as c:
         c.executescript(_SCHEMA_PATH.read_text())
+        # Dynamic check if hash column is missing
+        row = c.execute("PRAGMA table_info(audit_log)").fetchall()
+        cols = [r["name"] for r in row]
+        if "hash" not in cols:
+            c.execute("ALTER TABLE audit_log ADD COLUMN hash TEXT")
+
+        # Chain any existing rows that do not have a hash value populated
+        unhashed = c.execute("SELECT * FROM audit_log WHERE hash IS NULL ORDER BY id ASC").fetchall()
+        if unhashed:
+            import hashlib
+            for row in unhashed:
+                id_ = row["id"]
+                ts = row["ts"]
+                session_id = row["session_id"]
+                channel = row["channel"]
+                channel_user_id = row["channel_user_id"]
+                trust_level = row["trust_level"]
+                event_type = row["event_type"]
+                tool = row["tool"]
+                policy_verdict = row["policy_verdict"]
+                params_json = row["params_json"]
+                result_json = row["result_json"]
+
+                prev_row = c.execute("SELECT hash FROM audit_log WHERE id < ? ORDER BY id DESC LIMIT 1", (id_,)).fetchone()
+                prev_hash = prev_row["hash"] if (prev_row and prev_row["hash"]) else ""
+
+                payload = f"{ts}|{session_id or ''}|{channel}|{channel_user_id}|{trust_level}|{event_type}|{tool or ''}|{policy_verdict or ''}|{params_json or ''}|{result_json or ''}|{prev_hash}"
+                expected_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+                c.execute("UPDATE audit_log SET hash = ? WHERE id = ?", (expected_hash, id_))
 
 
 def _jsonify(v: Any) -> str | None:
@@ -78,13 +108,27 @@ class AuditStore:
         result: Any = None,
     ) -> int:
         with _conn() as c:
+            # 1. Fetch previous hash
+            prev_row = c.execute("SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1").fetchone()
+            prev_hash = prev_row["hash"] if (prev_row and prev_row["hash"]) else ""
+
+            # 2. Prepare content
+            ts = time.time()
+            params_json = _jsonify(params)
+            result_json = _jsonify(result)
+
+            # 3. Calculate chain hash
+            payload = f"{ts}|{session_id or ''}|{channel}|{channel_user_id}|{trust_level}|{event_type}|{tool or ''}|{policy_verdict or ''}|{params_json or ''}|{result_json or ''}|{prev_hash}"
+            entry_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+            # 4. Insert row
             cur = c.execute(
                 """INSERT INTO audit_log
                    (ts, session_id, channel, channel_user_id, trust_level,
-                    event_type, tool, policy_verdict, params_json, result_json)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    event_type, tool, policy_verdict, params_json, result_json, hash)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    time.time(),
+                    ts,
                     session_id,
                     channel,
                     channel_user_id,
@@ -92,8 +136,9 @@ class AuditStore:
                     event_type,
                     tool,
                     policy_verdict,
-                    _jsonify(params),
-                    _jsonify(result),
+                    params_json,
+                    result_json,
+                    entry_hash,
                 ),
             )
             return int(cur.lastrowid or 0)
@@ -112,6 +157,33 @@ def get_store() -> AuditStore:
 
 def append(**kwargs: Any) -> int:
     return get_store().append(**kwargs)
+
+
+def verify_chain() -> bool:
+    """Verify that all entries in the audit log form a valid, untampered cryptographic hash chain."""
+    with _conn() as c:
+        rows = c.execute("SELECT * FROM audit_log ORDER BY id ASC").fetchall()
+        prev_hash = ""
+        for row in rows:
+            ts = row["ts"]
+            session_id = row["session_id"]
+            channel = row["channel"]
+            channel_user_id = row["channel_user_id"]
+            trust_level = row["trust_level"]
+            event_type = row["event_type"]
+            tool = row["tool"]
+            policy_verdict = row["policy_verdict"]
+            params_json = row["params_json"]
+            result_json = row["result_json"]
+            stored_hash = row["hash"]
+
+            payload = f"{ts}|{session_id or ''}|{channel}|{channel_user_id}|{trust_level}|{event_type}|{tool or ''}|{policy_verdict or ''}|{params_json or ''}|{result_json or ''}|{prev_hash}"
+            expected_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+            if not stored_hash or stored_hash != expected_hash:
+                return False
+            prev_hash = stored_hash
+    return True
 
 
 def query(limit: int = 100, session_id: str | None = None, channel: str | None = None) -> list[dict]:
