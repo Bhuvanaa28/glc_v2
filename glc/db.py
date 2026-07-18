@@ -9,11 +9,32 @@ separate append-only store under glc/audit/store.py.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+
+def _sign_call(ts: float, provider: str, model: str, input_tokens: int,
+               output_tokens: int, agent: str | None) -> str:
+    """HMAC-SHA256 signature binding the key cost fields to the install token."""
+    from glc.config import get_or_create_install_token
+    secret = get_or_create_install_token()
+    payload = f"{ts}|{provider}|{model}|{input_tokens}|{output_tokens}|{agent}"
+    return hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+
+
+def _verify_call_row(row: sqlite3.Row) -> bool:
+    """Return True if the row's signature matches its key fields."""
+    sig = row["signature"] if "signature" in row.keys() else None
+    if not sig:
+        return False
+    expected = _sign_call(row["ts"], row["provider"], row["model"],
+                          row["input_tokens"], row["output_tokens"], row["agent"])
+    return hmac.compare_digest(sig, expected)
 
 DEFAULT_DIR = Path(os.path.expanduser("~/.glc"))
 DB_PATH = os.getenv("GLC_GATEWAY_DB", str(DEFAULT_DIR / "gateway.sqlite"))
@@ -62,7 +83,8 @@ def init() -> None:
                 embed_dim INTEGER,
                 agent TEXT,
                 session TEXT,
-                retries INTEGER DEFAULT 0
+                retries INTEGER DEFAULT 0,
+                signature TEXT
             )"""
         )
         c.execute("CREATE INDEX IF NOT EXISTS idx_ts ON calls(ts DESC)")
@@ -70,6 +92,11 @@ def init() -> None:
         c.execute("CREATE INDEX IF NOT EXISTS idx_role_ts ON calls(call_role, ts DESC)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_agent_ts ON calls(agent, ts DESC)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_session_ts ON calls(session, ts DESC)")
+        # Migrate existing databases without the signature column
+        try:
+            c.execute("ALTER TABLE calls ADD COLUMN signature TEXT")
+        except Exception:
+            pass
 
 
 def log_call(
@@ -96,6 +123,8 @@ def log_call(
     session=None,
     retries=0,
 ) -> None:
+    ts = time.time()
+    sig = _sign_call(ts, provider, model, input_tokens, output_tokens, agent)
     with conn() as c:
         c.execute(
             """INSERT INTO calls (ts, provider, model, input_tokens, output_tokens,
@@ -103,10 +132,10 @@ def log_call(
                                   latency_ms, status, error, prompt_chars, response_chars,
                                   override, attempted, tool_calls, reasoning_applied, tool_dialect,
                                   call_role, router_decision, embed_dim,
-                                  agent, session, retries)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                  agent, session, retries, signature)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                time.time(),
+                ts,
                 provider,
                 model,
                 input_tokens,
@@ -129,6 +158,7 @@ def log_call(
                 agent,
                 session,
                 retries,
+                sig,
             ),
         )
 
@@ -141,21 +171,40 @@ def by_agent(session=None, since=None):
         where.append("session=?")
         args.append(session)
     q = (
-        "SELECT agent, provider, COUNT(*) AS calls, "
-        "SUM(input_tokens) AS in_tok, SUM(output_tokens) AS out_tok, "
-        "SUM(latency_ms) AS total_latency_ms, "
-        "SUM(retries) AS total_retries, "
-        "SUM(CASE WHEN status='ok' THEN 1 ELSE 0 END) AS ok, "
-        "SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) AS errors "
-        "FROM calls WHERE " + " AND ".join(where) + " AND agent IS NOT NULL "
-        "GROUP BY agent, provider"
+        "SELECT * FROM calls WHERE "
+        + " AND ".join(where)
+        + " AND agent IS NOT NULL"
     )
     with conn() as c:
         rows = c.execute(q, args).fetchall()
-        out: dict[str, list[dict]] = {}
-        for r in rows:
-            out.setdefault(r["agent"], []).append(dict(r))
-        return out
+
+    # Re-aggregate in Python after per-row signature verification.
+    # Rows with missing or mismatched signatures are silently discarded.
+    buckets: dict[tuple, dict] = {}
+    for r in rows:
+        if not _verify_call_row(r):
+            continue
+        key = (r["agent"], r["provider"])
+        if key not in buckets:
+            buckets[key] = {
+                "agent": r["agent"], "provider": r["provider"],
+                "calls": 0, "in_tok": 0, "out_tok": 0,
+                "total_latency_ms": 0, "total_retries": 0,
+                "ok": 0, "errors": 0,
+            }
+        b = buckets[key]
+        b["calls"] += 1
+        b["in_tok"] += r["input_tokens"] or 0
+        b["out_tok"] += r["output_tokens"] or 0
+        b["total_latency_ms"] += r["latency_ms"] or 0
+        b["total_retries"] += r["retries"] or 0
+        b["ok"] += 1 if r["status"] == "ok" else 0
+        b["errors"] += 1 if r["status"] == "error" else 0
+
+    out: dict[str, list[dict]] = {}
+    for b in buckets.values():
+        out.setdefault(b["agent"], []).append(b)
+    return out
 
 
 def recent(limit=100, provider=None, status=None):
@@ -172,7 +221,8 @@ def recent(limit=100, provider=None, status=None):
     q += " ORDER BY ts DESC LIMIT ?"
     args.append(limit)
     with conn() as c:
-        return [dict(r) for r in c.execute(q, args).fetchall()]
+        return [dict(r) for r in c.execute(q, args).fetchall()
+                if _verify_call_row(r)]
 
 
 def aggregate(call_role=None):
