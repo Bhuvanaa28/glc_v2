@@ -26,22 +26,23 @@ LOCAL_GLC = Path(__file__).parent / "glc"
 # pyproject.toml, the glc package copied in, and GLC_CONFIG_DIR pointed at the
 # Volume mount so all databases land on persistent storage instead of the
 # throwaway container filesystem.
+# Pinned, reproducible base image by digest.
 image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .pip_install(
-        "fastapi>=0.110",
-        "uvicorn[standard]>=0.27",
-        "httpx>=0.27",
-        "python-dotenv>=1.0",
-        "pydantic>=2.6",
-        "jsonschema>=4.21",
-        "pyyaml>=6.0",
-        "websockets>=12.0",
-        "twilio>=9.0",
+    modal.Image.from_registry(
+        "python:3.11-slim-bookworm@sha256:d8c558caff1ca2c49ee6900ee9c31405b0c72f10b2170f074d4850faad83ff6e"
     )
-    .env({"GLC_CONFIG_DIR": "/data/glc", "GLC_ENV": "production"})
+    .pip_install("uv")
+    .add_local_file("pyproject.toml", "/root/pyproject.toml")
+    .add_local_file("uv.lock", "/root/uv.lock")
+    .run_commands("cd /root && uv sync --frozen --no-dev --no-install-project")
+    .env({
+        "GLC_CONFIG_DIR": "/data/glc",
+        "GLC_ENV": "production",
+        "PATH": "/root/.venv/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    })
     .add_local_dir(str(LOCAL_GLC), remote_path="/root/glc")
 )
+
 
 # A persistent Volume. The audit db and pairing db live here and
 # survive restarts and redeploys. Without this, every restart wipes them.
