@@ -10,6 +10,8 @@ The pairing store is sqlite-backed so it survives restarts.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import secrets
 import sqlite3
@@ -18,9 +20,8 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
 from glc.config import get_or_create_install_token
-import hmac
-import hashlib
 
 DEFAULT_DIR = Path(os.path.expanduser("~/.glc"))
 CODE_TTL_SECONDS = 5 * 60
@@ -34,7 +35,6 @@ def _calculate_signature(channel: str, channel_user_id: str, trust_level: str, p
     master = get_or_create_install_token()
     payload = f"{channel}|{channel_user_id}|{trust_level}|{paired_at}"
     return hmac.new(master.encode(), payload.encode(), hashlib.sha256).hexdigest()
-
 
 
 @contextmanager
@@ -95,10 +95,12 @@ class PairingStore:
             # Retroactively sign any unsigned pairings:
             unsigned = c.execute("SELECT * FROM pairings WHERE signature IS NULL").fetchall()
             for r in unsigned:
-                sig = _calculate_signature(r["channel"], r["channel_user_id"], r["trust_level"], float(r["paired_at"]))
+                sig = _calculate_signature(
+                    r["channel"], r["channel_user_id"], r["trust_level"], float(r["paired_at"])
+                )
                 c.execute(
                     "UPDATE pairings SET signature = ? WHERE channel = ? AND channel_user_id = ?",
-                    (sig, r["channel"], r["channel_user_id"])
+                    (sig, r["channel"], r["channel_user_id"]),
                 )
 
     def issue_code(
@@ -132,7 +134,9 @@ class PairingStore:
                 c.execute("DELETE FROM pending_codes WHERE code=?", (code,))
                 return None
             paired_at = time.time()
-            sig = _calculate_signature(row["channel"], row["channel_user_id"], row["requested_trust_level"], paired_at)
+            sig = _calculate_signature(
+                row["channel"], row["channel_user_id"], row["requested_trust_level"], paired_at
+            )
             c.execute(
                 """INSERT OR REPLACE INTO pairings
                    (channel, channel_user_id, user_handle, trust_level, paired_at, signature)
@@ -163,7 +167,9 @@ class PairingStore:
             ).fetchone()
             if row is None:
                 return None
-            expected = _calculate_signature(row["channel"], row["channel_user_id"], row["trust_level"], float(row["paired_at"]))
+            expected = _calculate_signature(
+                row["channel"], row["channel_user_id"], row["trust_level"], float(row["paired_at"])
+            )
             stored = row["signature"]
             if not stored or not hmac.compare_digest(stored, expected):
                 return None
@@ -184,7 +190,9 @@ class PairingStore:
         with _conn() as c:
             res = []
             for r in c.execute(q, args).fetchall():
-                expected = _calculate_signature(r["channel"], r["channel_user_id"], r["trust_level"], float(r["paired_at"]))
+                expected = _calculate_signature(
+                    r["channel"], r["channel_user_id"], r["trust_level"], float(r["paired_at"])
+                )
                 stored = r["signature"]
                 if stored and hmac.compare_digest(stored, expected):
                     res.append(
@@ -200,11 +208,14 @@ class PairingStore:
 
     def all_pairings(self) -> list[PairingRecord]:
         import hmac
+
         with _conn() as c:
             rows = c.execute("SELECT * FROM pairings").fetchall()
             res = []
             for r in rows:
-                expected = _calculate_signature(r["channel"], r["channel_user_id"], r["trust_level"], float(r["paired_at"]))
+                expected = _calculate_signature(
+                    r["channel"], r["channel_user_id"], r["trust_level"], float(r["paired_at"])
+                )
                 stored = r["signature"]
                 if stored and hmac.compare_digest(stored, expected):
                     res.append(

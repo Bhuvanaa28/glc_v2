@@ -16,7 +16,6 @@ import os
 import time
 from pathlib import Path
 from typing import Any
-
 from urllib.parse import urlparse
 
 import yaml
@@ -292,18 +291,15 @@ async def _resolve_image_urls(messages):
     import base64
     import ipaddress
     import socket
-    from urllib.parse import urlparse, urljoin
+    from urllib.parse import urljoin, urlparse
+
     import httpx as _httpx
 
     def _is_safe_ip(ip_str: str) -> bool:
         try:
             ip = ipaddress.ip_address(ip_str)
             return not (
-                ip.is_loopback or
-                ip.is_private or
-                ip.is_link_local or
-                ip.is_multicast or
-                ip.is_unspecified
+                ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast or ip.is_unspecified
             )
         except ValueError:
             return False
@@ -316,17 +312,17 @@ async def _resolve_image_urls(messages):
             host = parsed.hostname
             if not host:
                 return False
-            
+
             # Check if host is direct IP
             try:
                 ipaddress.ip_address(host)
                 return _is_safe_ip(host)
             except ValueError:
                 pass
-            
+
             # Resolve host DNS
             addr_info = socket.getaddrinfo(host, None)
-            for family, socktype, proto, canonname, sockaddr in addr_info:
+            for _family, _socktype, _proto, _canonname, sockaddr in addr_info:
                 ip = sockaddr[0]
                 if not _is_safe_ip(ip):
                     return False
@@ -537,7 +533,11 @@ async def chat(req: ChatRequest, request: Request):
                             retries=retries,
                         )
                         p_obj = state.providers.get(name)
-                        domain = urlparse(p_obj.base_url).hostname if (p_obj and getattr(p_obj, "base_url", None)) else name
+                        domain = (
+                            urlparse(p_obj.base_url).hostname
+                            if (p_obj and getattr(p_obj, "base_url", None))
+                            else name
+                        )
                         yield f"data: {json.dumps({'error': f'{name} failed: upstream error from {domain}'})}\n\n"
 
                 return StreamingResponse(gen(), media_type="text/event-stream")
@@ -641,7 +641,7 @@ async def chat(req: ChatRequest, request: Request):
                         name=tc["name"],
                         arguments=tc.get("arguments") or {},
                         provider_meta=tc.get("provider_meta"),
-                        token=generate_tool_call_token(tc["id"], tc["name"])
+                        token=generate_tool_call_token(tc["id"], tc["name"]),
                     )
                     for tc in result["tool_calls"]
                 ],
@@ -682,7 +682,11 @@ async def chat(req: ChatRequest, request: Request):
             all_attempts.append({"provider": name, "reason": tag})
             if explicit_override or not getattr(e, "retryable", True):
                 p_obj = state.providers.get(name)
-                domain = urlparse(p_obj.base_url).hostname if (p_obj and getattr(p_obj, "base_url", None)) else name
+                domain = (
+                    urlparse(p_obj.base_url).hostname
+                    if (p_obj and getattr(p_obj, "base_url", None))
+                    else name
+                )
                 raise HTTPException(502, f"{name} failed: upstream error from {domain}")
             candidates = [c for c in candidates if c != name]
             continue
@@ -709,12 +713,17 @@ async def chat(req: ChatRequest, request: Request):
             all_attempts.append({"provider": name, "reason": f"exception: {str(e)[:120]}"})
             if explicit_override:
                 p_obj = state.providers.get(name)
-                domain = urlparse(p_obj.base_url).hostname if (p_obj and getattr(p_obj, "base_url", None)) else name
+                domain = (
+                    urlparse(p_obj.base_url).hostname
+                    if (p_obj and getattr(p_obj, "base_url", None))
+                    else name
+                )
                 raise HTTPException(502, f"{name} failed: upstream error from {domain}")
             candidates = [c for c in candidates if c != name]
             continue
 
     import logging
+
     logging.error(f"[glc.chat] all providers exhausted. Attempts: {all_attempts}. Last error: {last_err}")
     raise HTTPException(503, "all providers unavailable")
 

@@ -14,10 +14,11 @@ The gateway's channel_webhook route dispatches to these sandboxed functions
 
 from __future__ import annotations
 
-import modal
 from pathlib import Path
 
-from modal_app import app, image, data_volume, install_token_secret, llm_secret
+import modal
+
+from modal_app import app, data_volume, image, install_token_secret, llm_secret
 
 LOCAL_GLC = Path(__file__).parent / "glc"
 
@@ -26,22 +27,26 @@ LOCAL_GLC = Path(__file__).parent / "glc"
 # These MUST be kept in sync with channels.yaml.
 # ---------------------------------------------------------------------------
 _EGRESS: dict[str, list[str]] = {
-    "telegram":     ["api.telegram.org"],
-    "discord":      ["discord.com", "discordapp.com"],
-    "slack":        ["slack.com", "api.slack.com", "hooks.slack.com"],
-    "whatsapp":     ["graph.facebook.com", "api.twilio.com"],
-    "teams":        ["graph.microsoft.com", "smba.trafficmanager.net",
-                     "login.microsoftonline.com", "api.botframework.com"],
-    "matrix":       [],   # operator-configured homeserver
-    "line":         ["api.line.me"],
-    "signal":       [],
-    "gmail":        ["www.googleapis.com", "gmail.googleapis.com", "oauth2.googleapis.com"],
-    "imap":         [],
-    "twilio_sms":   ["api.twilio.com"],
+    "telegram": ["api.telegram.org"],
+    "discord": ["discord.com", "discordapp.com"],
+    "slack": ["slack.com", "api.slack.com", "hooks.slack.com"],
+    "whatsapp": ["graph.facebook.com", "api.twilio.com"],
+    "teams": [
+        "graph.microsoft.com",
+        "smba.trafficmanager.net",
+        "login.microsoftonline.com",
+        "api.botframework.com",
+    ],
+    "matrix": [],  # operator-configured homeserver
+    "line": ["api.line.me"],
+    "signal": [],
+    "gmail": ["www.googleapis.com", "gmail.googleapis.com", "oauth2.googleapis.com"],
+    "imap": [],
+    "twilio_sms": ["api.twilio.com"],
     "twilio_voice": ["api.twilio.com"],
-    "webui":        [],
-    "webhook":      [],   # operator must configure via env/channels.yaml
-    "local_mic":    [],
+    "webui": [],
+    "webhook": [],  # operator must configure via env/channels.yaml
+    "local_mic": [],
 }
 
 
@@ -58,6 +63,7 @@ def _make_adapter_send_fn(channel: str):
     def _adapter_send(reply_dict: dict) -> dict:
         """Run adapter.send() isolated inside a network-restricted sandbox."""
         import asyncio
+
         from glc.channels import registry
         from glc.channels.envelope import ChannelReply
 
@@ -71,6 +77,4 @@ def _make_adapter_send_fn(channel: str):
 
 # Build one sandboxed function per channel and expose them in a registry.
 # Gateway code imports this dict and calls the correct function by name.
-SANDBOX_SEND: dict[str, object] = {
-    ch: _make_adapter_send_fn(ch) for ch in _EGRESS
-}
+SANDBOX_SEND: dict[str, object] = {ch: _make_adapter_send_fn(ch) for ch in _EGRESS}

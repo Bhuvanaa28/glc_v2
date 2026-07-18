@@ -23,7 +23,8 @@ from glc import embedders as E  # noqa: E402
 from glc import providers as P  # noqa: E402
 from glc.audit import init_store as init_audit  # noqa: E402
 from glc.cache import GeminiCache  # noqa: E402
-from glc.config import get_or_create_install_token  # noqa: E402
+from glc.channels import registry  # noqa: E402
+from glc.config import get_or_create_install_token, get_scoped_token, verify_tool_call_token  # noqa: E402
 from glc.policy import reload_engine  # noqa: E402
 from glc.routes import channels as channels_route  # noqa: E402
 from glc.routes import chat as chat_route  # noqa: E402
@@ -31,9 +32,6 @@ from glc.routes import control as control_route  # noqa: E402
 from glc.routes import speak as speak_route  # noqa: E402
 from glc.routes import transcribe as transcribe_route  # noqa: E402
 from glc.routing import Router, RouterPool  # noqa: E402
-from glc.channels import registry
-from glc.config import get_scoped_token
-from glc.config import get_scoped_token, verify_tool_call_token
 
 PORT = int(os.getenv("GLC_PORT", "8111"))
 
@@ -92,6 +90,7 @@ app.include_router(speak_route.router)
 app.include_router(control_route.router)
 app.include_router(channels_route.router)
 
+
 @app.middleware("http")
 async def require_authentication(request: Request, call_next):
     path = request.url.path
@@ -101,7 +100,7 @@ async def require_authentication(request: Request, call_next):
         if not authorization or not authorization.startswith("Bearer "):
             return JSONResponse(
                 status_code=401,
-                content={"detail": "missing bearer token (Authorization: Bearer <install_token>)"}
+                content={"detail": "missing bearer token (Authorization: Bearer <install_token>)"},
             )
         presented = authorization.removeprefix("Bearer ").strip()
         if presented == expected:
@@ -118,15 +117,12 @@ async def require_authentication(request: Request, call_next):
                 if path != "/v1/chat":
                     return JSONResponse(
                         status_code=403,
-                        content={"detail": f"Forbidden: tool call token is not authorized for {path}"}
+                        content={"detail": f"Forbidden: tool call token is not authorized for {path}"},
                     )
                 response = await call_next(request)
                 return response
             else:
-                return JSONResponse(
-                    status_code=403,
-                    content={"detail": "tool call token expired or invalid"}
-                )
+                return JSONResponse(status_code=403, content={"detail": "tool call token expired or invalid"})
 
         matched_channel = None
         for channel in registry.list_channels():
@@ -141,18 +137,16 @@ async def require_authentication(request: Request, call_next):
             if not any(path.startswith(prefix) for prefix in allowed_prefixes):
                 return JSONResponse(
                     status_code=403,
-                    content={"detail": f"Forbidden: adapter token is not authorized for {path}"}
+                    content={"detail": f"Forbidden: adapter token is not authorized for {path}"},
                 )
             response = await call_next(request)
             return response
 
-        return JSONResponse(
-            status_code=403,
-            content={"detail": "install token mismatch"}
-        )
+        return JSONResponse(status_code=403, content={"detail": "install token mismatch"})
 
     response = await call_next(request)
     return response
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index() -> str:

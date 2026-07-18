@@ -68,8 +68,8 @@ def check_egress(channel: str, url: str) -> bool:
     Deny-by-default: if the allowlist is empty or the hostname is not in it,
     the connection is rejected. Also blocks raw IP addresses in private/reserved ranges.
     """
-    from urllib.parse import urlparse
     import ipaddress
+    from urllib.parse import urlparse
 
     try:
         parsed = urlparse(url)
@@ -97,4 +97,3 @@ def check_egress(channel: str, url: str) -> bool:
         return False  # Deny by default if no hosts declared
 
     return any(hostname == h or hostname.endswith("." + h) for h in allowed_hosts)
-

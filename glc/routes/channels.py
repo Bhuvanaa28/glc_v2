@@ -211,15 +211,15 @@ async def channel_webhook(name: str, request: Request):
         # The sandbox runs with network_access restricted to egress_hosts only.
         try:
             from modal_adapters import SANDBOX_SEND
+
             sandbox_fn = SANDBOX_SEND.get(name)
             if sandbox_fn is not None:
                 sandbox_fn.remote(reply.model_dump())  # type: ignore[union-attr]
             else:
                 await adapter.send(reply)  # fallback: unknown/new channel
         except Exception:
-            await adapter.send(reply)   # graceful degradation if Modal unavailable
+            await adapter.send(reply)  # graceful degradation if Modal unavailable
     else:
         await adapter.send(reply)
 
     return {"status": "ok"}
-

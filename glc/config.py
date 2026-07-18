@@ -6,16 +6,15 @@ tests and CI. The directory is created on import if missing.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
-import yaml
 import base64
 import hashlib
 import hmac
 import json
+import os
 import time
+from pathlib import Path
 
+import yaml
 
 DEFAULT_DIR = Path(os.path.expanduser("~/.glc"))
 CONFIG_DIR = Path(os.getenv("GLC_CONFIG_DIR", str(DEFAULT_DIR)))
@@ -80,11 +79,7 @@ def generate_tool_call_token(tool_call_id: str, tool_name: str, ttl_seconds: int
     """Generate a stateless, signed tool call token (similar to a JWT)."""
 
     master = get_or_create_install_token()
-    payload = {
-        "id": tool_call_id,
-        "name": tool_name,
-        "exp": int(time.time()) + ttl_seconds
-    }
+    payload = {"id": tool_call_id, "name": tool_name, "exp": int(time.time()) + ttl_seconds}
     payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     sig = hmac.new(master.encode(), payload_b64.encode(), hashlib.sha256).digest()
     sig_b64 = base64.urlsafe_b64encode(sig).decode().rstrip("=")

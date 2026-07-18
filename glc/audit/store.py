@@ -11,6 +11,7 @@ Each append commits immediately so writes survive a hard kill.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -18,7 +19,6 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
-import hashlib
 
 DEFAULT_DIR = Path(os.path.expanduser("~/.glc"))
 
@@ -57,6 +57,7 @@ def init_store() -> None:
         unhashed = c.execute("SELECT * FROM audit_log WHERE hash IS NULL ORDER BY id ASC").fetchall()
         if unhashed:
             import hashlib
+
             for row in unhashed:
                 id_ = row["id"]
                 ts = row["ts"]
@@ -70,7 +71,9 @@ def init_store() -> None:
                 params_json = row["params_json"]
                 result_json = row["result_json"]
 
-                prev_row = c.execute("SELECT hash FROM audit_log WHERE id < ? ORDER BY id DESC LIMIT 1", (id_,)).fetchone()
+                prev_row = c.execute(
+                    "SELECT hash FROM audit_log WHERE id < ? ORDER BY id DESC LIMIT 1", (id_,)
+                ).fetchone()
                 prev_hash = prev_row["hash"] if (prev_row and prev_row["hash"]) else ""
 
                 payload = f"{ts}|{session_id or ''}|{channel}|{channel_user_id}|{trust_level}|{event_type}|{tool or ''}|{policy_verdict or ''}|{params_json or ''}|{result_json or ''}|{prev_hash}"

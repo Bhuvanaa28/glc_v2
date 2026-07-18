@@ -18,10 +18,12 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
-def _sign_call(ts: float, provider: str, model: str, input_tokens: int,
-               output_tokens: int, agent: str | None) -> str:
+def _sign_call(
+    ts: float, provider: str, model: str, input_tokens: int, output_tokens: int, agent: str | None
+) -> str:
     """HMAC-SHA256 signature binding the key cost fields to the install token."""
     from glc.config import get_or_create_install_token
+
     secret = get_or_create_install_token()
     payload = f"{ts}|{provider}|{model}|{input_tokens}|{output_tokens}|{agent}"
     return hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -32,9 +34,11 @@ def _verify_call_row(row: sqlite3.Row) -> bool:
     sig = row["signature"] if "signature" in row.keys() else None
     if not sig:
         return False
-    expected = _sign_call(row["ts"], row["provider"], row["model"],
-                          row["input_tokens"], row["output_tokens"], row["agent"])
+    expected = _sign_call(
+        row["ts"], row["provider"], row["model"], row["input_tokens"], row["output_tokens"], row["agent"]
+    )
     return hmac.compare_digest(sig, expected)
+
 
 DEFAULT_DIR = Path(os.path.expanduser("~/.glc"))
 DB_PATH = os.getenv("GLC_GATEWAY_DB", str(DEFAULT_DIR / "gateway.sqlite"))
@@ -170,11 +174,7 @@ def by_agent(session=None, since=None):
     if session:
         where.append("session=?")
         args.append(session)
-    q = (
-        "SELECT * FROM calls WHERE "
-        + " AND ".join(where)
-        + " AND agent IS NOT NULL"
-    )
+    q = "SELECT * FROM calls WHERE " + " AND ".join(where) + " AND agent IS NOT NULL"
     with conn() as c:
         rows = c.execute(q, args).fetchall()
 
@@ -187,10 +187,15 @@ def by_agent(session=None, since=None):
         key = (r["agent"], r["provider"])
         if key not in buckets:
             buckets[key] = {
-                "agent": r["agent"], "provider": r["provider"],
-                "calls": 0, "in_tok": 0, "out_tok": 0,
-                "total_latency_ms": 0, "total_retries": 0,
-                "ok": 0, "errors": 0,
+                "agent": r["agent"],
+                "provider": r["provider"],
+                "calls": 0,
+                "in_tok": 0,
+                "out_tok": 0,
+                "total_latency_ms": 0,
+                "total_retries": 0,
+                "ok": 0,
+                "errors": 0,
             }
         b = buckets[key]
         b["calls"] += 1
@@ -221,8 +226,7 @@ def recent(limit=100, provider=None, status=None):
     q += " ORDER BY ts DESC LIMIT ?"
     args.append(limit)
     with conn() as c:
-        return [dict(r) for r in c.execute(q, args).fetchall()
-                if _verify_call_row(r)]
+        return [dict(r) for r in c.execute(q, args).fetchall() if _verify_call_row(r)]
 
 
 def aggregate(call_role=None):
