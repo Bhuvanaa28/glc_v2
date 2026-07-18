@@ -31,6 +31,9 @@ from glc.routes import control as control_route  # noqa: E402
 from glc.routes import speak as speak_route  # noqa: E402
 from glc.routes import transcribe as transcribe_route  # noqa: E402
 from glc.routing import Router, RouterPool  # noqa: E402
+from glc.channels import registry
+from glc.config import get_scoped_token
+from glc.config import get_scoped_token, verify_tool_call_token
 
 PORT = int(os.getenv("GLC_PORT", "8111"))
 
@@ -101,11 +104,52 @@ async def require_authentication(request: Request, call_next):
                 content={"detail": "missing bearer token (Authorization: Bearer <install_token>)"}
             )
         presented = authorization.removeprefix("Bearer ").strip()
-        if presented != expected:
-            return JSONResponse(
-                status_code=403,
-                content={"detail": "install token mismatch"}
-            )
+        if presented == expected:
+            request.state.caller_role = "admin"
+            response = await call_next(request)
+            return response
+
+        if presented.startswith("tc."):
+            payload = verify_tool_call_token(presented)
+            if payload:
+                request.state.caller_role = "tool_call"
+                request.state.tool_call_id = payload["id"]
+                request.state.tool_call_name = payload["name"]
+                if path != "/v1/chat":
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": f"Forbidden: tool call token is not authorized for {path}"}
+                    )
+                response = await call_next(request)
+                return response
+            else:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "tool call token expired or invalid"}
+                )
+
+        matched_channel = None
+        for channel in registry.list_channels():
+            if presented == get_scoped_token(channel):
+                matched_channel = channel
+                break
+
+        if matched_channel:
+            request.state.caller_role = "adapter"
+            request.state.caller_channel = matched_channel
+            allowed_prefixes = ("/v1/chat", "/v1/channels")
+            if not any(path.startswith(prefix) for prefix in allowed_prefixes):
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": f"Forbidden: adapter token is not authorized for {path}"}
+                )
+            response = await call_next(request)
+            return response
+
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "install token mismatch"}
+        )
 
     response = await call_next(request)
     return response

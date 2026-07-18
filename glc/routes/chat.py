@@ -26,6 +26,7 @@ from jsonschema import Draft202012Validator, ValidationError
 
 from glc import db
 from glc import providers as P
+from glc.config import generate_tool_call_token
 from glc.llm_schemas import (
     BatchChatRequest,
     ChatRequest,
@@ -634,7 +635,16 @@ async def chat(req: ChatRequest, request: Request):
                 provider=name,
                 model=result["model"],
                 text=result["text"],
-                tool_calls=[ToolCall(**tc) for tc in result["tool_calls"]],
+                tool_calls=[
+                    ToolCall(
+                        id=tc["id"],
+                        name=tc["name"],
+                        arguments=tc.get("arguments") or {},
+                        provider_meta=tc.get("provider_meta"),
+                        token=generate_tool_call_token(tc["id"], tc["name"])
+                    )
+                    for tc in result["tool_calls"]
+                ],
                 stop_reason=result["stop_reason"],
                 input_tokens=result["input_tokens"],
                 output_tokens=result["output_tokens"],

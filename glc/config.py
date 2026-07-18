@@ -10,6 +10,12 @@ import os
 from pathlib import Path
 
 import yaml
+import base64
+import hashlib
+import hmac
+import json
+import time
+
 
 DEFAULT_DIR = Path(os.path.expanduser("~/.glc"))
 CONFIG_DIR = Path(os.getenv("GLC_CONFIG_DIR", str(DEFAULT_DIR)))
@@ -56,3 +62,59 @@ def get_or_create_install_token() -> str:
     except OSError:
         pass
     return tok
+
+
+def get_scoped_token(name: str) -> str:
+    """Derive a cryptographically secure token for a specific channel name
+    by hashing the master installation token combined with the channel name."""
+
+    master = get_or_create_install_token()
+    return hmac.new(master.encode(), name.encode(), hashlib.sha256).hexdigest()
+
+
+def generate_tool_call_token(tool_call_id: str, tool_name: str, ttl_seconds: int = 60) -> str:
+    """Generate a stateless, signed tool call token (similar to a JWT)."""
+
+    master = get_or_create_install_token()
+    payload = {
+        "id": tool_call_id,
+        "name": tool_name,
+        "exp": int(time.time()) + ttl_seconds
+    }
+    payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    sig = hmac.new(master.encode(), payload_b64.encode(), hashlib.sha256).digest()
+    sig_b64 = base64.urlsafe_b64encode(sig).decode().rstrip("=")
+    return f"tc.{payload_b64}.{sig_b64}"
+
+
+def verify_tool_call_token(token_str: str) -> dict | None:
+    """Verify a signed tool call token and return the payload if valid."""
+
+    if not token_str.startswith("tc."):
+        return None
+    parts = token_str.split(".")
+    if len(parts) != 3:
+        return None
+    _, payload_b64, sig_b64 = parts
+
+    def decode_b64url(s: str) -> bytes:
+        padding = 4 - (len(s) % 4)
+        if padding < 4:
+            s += "=" * padding
+        return base64.urlsafe_b64decode(s.encode())
+
+    try:
+        payload_bytes = decode_b64url(payload_b64)
+        sig_bytes = decode_b64url(sig_b64)
+        payload = json.loads(payload_bytes.decode())
+    except Exception:
+        return None
+
+    if payload.get("exp", 0) < time.time():
+        return None
+
+    master = get_or_create_install_token()
+    expected_sig = hmac.new(master.encode(), payload_b64.encode(), hashlib.sha256).digest()
+    if not hmac.compare_digest(sig_bytes, expected_sig):
+        return None
+    return payload

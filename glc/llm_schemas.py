@@ -20,6 +20,7 @@ class ToolCall(BaseModel):
     # Optional opaque per-provider metadata (e.g. Gemini thoughtSignature)
     # that must be echoed back when sending the assistant turn.
     provider_meta: dict[str, Any] | None = None
+    token: str | None = None
 
     model_config = ConfigDict(extra="allow")
 
